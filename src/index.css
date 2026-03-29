@@ -63,6 +63,8 @@ body {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  /* Prefer light native form controls; explicit fills also set in App.css */
+  color-scheme: light;
 }
 
 h1,

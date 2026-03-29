@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { isTablePresent, isApprovedAwayActive } from '../hooks/useOfficeHourQueue';
+import { isApprovedAwayActive, isTablePresent } from '../hooks/useOfficeHourQueue';
 import HelpDuration from './HelpDuration';
 import AwayCountdown from './AwayCountdown';
 import ApprovedAwayTimer from './ApprovedAwayTimer';
@@ -123,7 +123,7 @@ export default function QueueList({
         {queue
           .filter((student) => {
             if (filter !== 'present') return true;
-            if (isApprovedAwayActive(student)) return true;
+            if (isApprovedAwayActive(student)) return false;
             return isTablePresent(sensorStatus[student.tableNum]);
           })
           .map((student) => {

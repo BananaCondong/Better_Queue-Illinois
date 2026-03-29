@@ -8,21 +8,29 @@ function pad2(n) {
  * Live countdown until an away student is auto-removed from the queue.
  */
 export default function AwayCountdown({ awaySince, awayTimeoutMinutes, active }) {
-  const [, setTick] = useState(0);
+  const [remainingSec, setRemainingSec] = useState(0);
 
   useEffect(() => {
     if (!active || awaySince == null) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
-  }, [active, awaySince]);
+    const awayMs = typeof awaySince === 'number' ? awaySince : Number(awaySince);
+    if (!Number.isFinite(awayMs)) return;
+    const totalSec = awayTimeoutMinutes * 60;
+    const tick = () => {
+      const elapsed = (Date.now() - awayMs) / 1000;
+      setRemainingSec(Math.max(0, Math.ceil(totalSec - elapsed)));
+    };
+    const t0 = setTimeout(tick, 0);
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(t0);
+      clearInterval(id);
+    };
+  }, [active, awaySince, awayTimeoutMinutes]);
 
   if (!active || awaySince == null) return null;
 
-  const totalSec = awayTimeoutMinutes * 60;
-  const elapsed = (Date.now() - awaySince) / 1000;
-  const remaining = Math.max(0, Math.ceil(totalSec - elapsed));
-  const m = Math.floor(remaining / 60);
-  const s = remaining % 60;
+  const m = Math.floor(remainingSec / 60);
+  const s = remainingSec % 60;
 
   return (
     <p className="away-countdown" role="status" aria-live="polite">

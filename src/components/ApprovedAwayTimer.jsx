@@ -5,14 +5,22 @@ function pad2(n) {
 }
 
 export default function ApprovedAwayTimer({ approvedUntil }) {
-  const [, setTick] = useState(0);
+  const [leftMs, setLeftMs] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
-    return () => clearInterval(id);
+    if (!Number.isFinite(approvedUntil)) return;
+    const tick = () => {
+      setLeftMs(Math.max(0, approvedUntil - Date.now()));
+    };
+    const t0 = setTimeout(tick, 0);
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(t0);
+      clearInterval(id);
+    };
   }, [approvedUntil]);
 
-  const left = Math.max(0, approvedUntil - Date.now());
+  const left = leftMs;
   const m = Math.floor(left / 60000);
   const s = Math.floor((left % 60000) / 1000);
 

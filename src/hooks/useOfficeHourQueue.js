@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { db } from '../firebase';
 import {
   ref,
@@ -39,6 +39,25 @@ export function isApprovedAwayActive(student) {
   return Number.isFinite(t) && Date.now() < t;
 }
 
+function parseApprovedUntilMs(r) {
+  if (!r) return NaN;
+  const u = r.approvedUntil;
+  if (typeof u === 'number' && Number.isFinite(u)) return u;
+  if (typeof u === 'string' && u.trim() !== '') {
+    const n = Number(u);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  const n = Number(u);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function isApprovedAwayExpired(student) {
+  const r = student?.awayTimeRequest;
+  if (!r || String(r.status) !== 'approved') return false;
+  const until = parseApprovedUntilMs(r);
+  return Number.isFinite(until) && Date.now() >= until;
+}
+
 export function useOfficeHourQueue() {
   const [name, setName] = useState('');
   const [topic, setTopic] = useState('');
@@ -54,6 +73,8 @@ export function useOfficeHourQueue() {
   const [taCheckInDraft, setTaCheckInDraft] = useState(() => readStoredTaCheckInName());
   const [availableTas, setAvailableTas] = useState([]);
   const [, setTick] = useState(0);
+  const queueRef = useRef([]);
+  queueRef.current = queue;
 
   const writeTaPresence = useCallback((displayName) => {
     const t = typeof displayName === 'string' ? displayName.trim() : '';
@@ -152,31 +173,33 @@ export function useOfficeHourQueue() {
     }
   }, [queue, myQueueEntryId]);
 
-  /** Clear expired TA-approved away windows. */
+  /**
+   * When TA-approved away hits its end time, hand off to the same path as sensor-based away:
+   * clear the away request, mark away + awaySince, then the standard away-timeout effect removes
+   * the row if they stay not-at-table long enough.
+   * Stable interval + queueRef so queue churn from presence sync does not reset this timer.
+   */
   useEffect(() => {
     const tick = () => {
       const now = Date.now();
-      for (const student of queue) {
-        const r = student.awayTimeRequest;
-        const until =
-          r?.approvedUntil == null
-            ? NaN
-            : typeof r.approvedUntil === 'number'
-              ? r.approvedUntil
-              : Number(r.approvedUntil);
-        if (r?.status === 'approved' && Number.isFinite(until) && now >= until) {
-          update(ref(db, `queue/${student.id}`), { awayTimeRequest: null });
-        }
+      for (const student of queueRef.current) {
+        if (!isApprovedAwayExpired(student)) continue;
+        update(ref(db, `queue/${student.id}`), {
+          awayTimeRequest: null,
+          presence: 'away',
+          awaySince: now,
+        });
       }
     };
     tick();
-    const interval = setInterval(tick, 5000);
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [queue]);
+  }, []);
 
   /** Keep queue.awaySince and queue.presence in sync with table sensors (shared across clients). */
   useEffect(() => {
     for (const student of queue) {
+      if (isApprovedAwayExpired(student)) continue;
       const raw = sensorStatus[student.tableNum];
       const present = isTablePresent(raw);
       const beingHelped = !!student.beingHelped;
@@ -277,6 +300,17 @@ export function useOfficeHourQueue() {
     return `${Math.floor(mins / 60)}h ago`;
   };
 
+  /** Remove queue entry and mark the student's table as TA-cleared absent (persists after queue row is gone). */
+  const removeFromQueueAndMarkTableAbsent = (id, tableNum) => {
+    const tableKey = String(tableNum ?? '').trim();
+    const pathUpdates = { [`queue/${id}`]: null };
+    if (tableKey) {
+      pathUpdates[`tables/${tableKey}/presence`] = 'absent';
+      pathUpdates[`tables/${tableKey}/updatedAt`] = serverTimestamp();
+    }
+    update(ref(db), pathUpdates);
+  };
+
   const handleStartAnswering = (id) => {
     const helperName = taCheckInName.trim() || 'TA';
     update(ref(db, `queue/${id}`), {
@@ -295,11 +329,14 @@ export function useOfficeHourQueue() {
   };
 
   const handleFinishAnswering = (id) => {
-    remove(ref(db, `queue/${id}`));
+    const student = queue.find((s) => s.id === id);
+    removeFromQueueAndMarkTableAbsent(id, student?.tableNum);
   };
 
   const handleDelete = (id) => {
-    if (window.confirm('Remove student?')) remove(ref(db, `queue/${id}`));
+    if (!window.confirm('Remove student?')) return;
+    const student = queue.find((s) => s.id === id);
+    removeFromQueueAndMarkTableAbsent(id, student?.tableNum);
   };
 
   const handleReview = (id, message) => {

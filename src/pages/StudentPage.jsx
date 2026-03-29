@@ -72,7 +72,7 @@ export default function StudentPage() {
               filter={q.filter}
               setFilter={q.setFilter}
               getWaitTime={q.getWaitTime}
-              awayTimeoutMinutes={q.awayTimeoutMinutes}
+              awayTimeoutSeconds={q.awayTimeoutSeconds}
               isTA={false}
               myQueueEntryId={q.myQueueEntryId}
               handleStartAnswering={q.handleStartAnswering}

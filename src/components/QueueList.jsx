@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
-import { isApprovedAwayActive, isTablePresent } from '../hooks/useOfficeHourQueue';
+import {
+  isApprovedAwayActive,
+  isTablePresent,
+  getAwayRequestDurationSeconds,
+  getApprovedAwayEndMs,
+} from '../hooks/useOfficeHourQueue';
 import HelpDuration from './HelpDuration';
 import AwayCountdown from './AwayCountdown';
 import ApprovedAwayTimer from './ApprovedAwayTimer';
@@ -19,7 +24,7 @@ export default function QueueList({
   filter,
   setFilter,
   getWaitTime,
-  awayTimeoutMinutes,
+  awayTimeoutSeconds,
   isTA,
   myQueueEntryId = '',
   handleStartAnswering,
@@ -39,7 +44,7 @@ export default function QueueList({
   const [editingTopicForId, setEditingTopicForId] = useState(null);
   const [topicDraft, setTopicDraft] = useState('');
   const [awayModalStudentId, setAwayModalStudentId] = useState(null);
-  const [awayDurationDraft, setAwayDurationDraft] = useState('15');
+  const [awayDurationDraft, setAwayDurationDraft] = useState('30');
   const [awayReasonDraft, setAwayReasonDraft] = useState('');
 
   const reviewStudent = reviewStudentId
@@ -86,7 +91,7 @@ export default function QueueList({
   const closeAwayModal = () => {
     setAwayModalStudentId(null);
     setAwayReasonDraft('');
-    setAwayDurationDraft('15');
+    setAwayDurationDraft('30');
   };
 
   const submitAwayRequest = () => {
@@ -132,12 +137,7 @@ export default function QueueList({
             const approvedAway = isApprovedAwayActive(student);
             const snapshotUrl = raw && typeof raw === 'object' ? raw.imageUrl : null;
             const awayReq = student.awayTimeRequest;
-            const approvedUntilMs =
-              awayReq?.approvedUntil == null
-                ? NaN
-                : typeof awayReq.approvedUntil === 'number'
-                  ? awayReq.approvedUntil
-                  : Number(awayReq.approvedUntil);
+            const approvedUntilMs = getApprovedAwayEndMs(student);
             const railMod = approvedAway
               ? 'presence-rail--approved-away'
               : present
@@ -165,7 +165,7 @@ export default function QueueList({
                     <div className="away-request-ta-banner__head">
                       <span className="away-request-ta-banner__title">Away time request</span>
                       <span className="away-request-ta-banner__meta">
-                        {awayReq.durationMinutes} min · requested{' '}
+                        {getAwayRequestDurationSeconds(awayReq) ?? '—'}s · requested{' '}
                         {getWaitTime(awayReq.requestedAt)}
                       </span>
                     </div>
@@ -271,7 +271,7 @@ export default function QueueList({
                     )}
                     {student.id === myQueueEntryId && awayReq?.status === 'pending' && (
                       <p className="away-request-student-pending">
-                        Away request pending TA approval ({awayReq.durationMinutes} min).
+                        Away request pending TA approval ({getAwayRequestDurationSeconds(awayReq) ?? '—'}s).
                       </p>
                     )}
                     {student.id === myQueueEntryId && awayReq?.status === 'denied' && (
@@ -297,7 +297,7 @@ export default function QueueList({
                     {!present && !student.beingHelped && !approvedAway && (
                       <AwayCountdown
                         awaySince={student.awaySince}
-                        awayTimeoutMinutes={awayTimeoutMinutes}
+                        awayTimeoutSeconds={awayTimeoutSeconds}
                         active={!present && !student.beingHelped}
                       />
                     )}
@@ -310,7 +310,7 @@ export default function QueueList({
                           className="btn-request-away"
                           onClick={() => {
                             setAwayModalStudentId(student.id);
-                            setAwayDurationDraft('15');
+                            setAwayDurationDraft('30');
                             setAwayReasonDraft('');
                           }}
                         >
@@ -467,12 +467,12 @@ export default function QueueList({
               queue while approved.
             </p>
             <div className="form-group away-request-modal-field">
-              <label htmlFor="away-duration">Duration (minutes)</label>
+              <label htmlFor="away-duration">Duration (seconds)</label>
               <input
                 id="away-duration"
                 type="number"
                 min={1}
-                max={120}
+                max={300}
                 step={1}
                 value={awayDurationDraft}
                 onChange={(e) => setAwayDurationDraft(e.target.value)}
@@ -506,7 +506,7 @@ export default function QueueList({
                   !awayReasonDraft.trim() ||
                   Number.isNaN(Number(awayDurationDraft)) ||
                   Number(awayDurationDraft) < 1 ||
-                  Number(awayDurationDraft) > 120
+                  Number(awayDurationDraft) > 300
                 }
               >
                 Send request

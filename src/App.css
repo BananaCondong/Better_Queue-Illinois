@@ -378,7 +378,8 @@ body {
 }
 
 .ta-away-settings__input {
-  width: 4.5rem;
+  min-width: 4.5rem;
+  width: 5.25rem;
   padding: 8px 10px;
   border: 1px solid #d1d5db;
   border-radius: 8px;

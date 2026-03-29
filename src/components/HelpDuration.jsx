@@ -1,17 +1,7 @@
 import { useState, useEffect } from 'react';
 
-function formatElapsed(totalSec) {
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
 /**
- * Live MM:SS from when this instance mounted (use key={helpStartedAt} on parent
+ * Live elapsed seconds from when this instance mounted (use key={helpStartedAt} on parent
  * so a new help session resets the counter).
  */
 export default function HelpDuration() {
@@ -26,7 +16,7 @@ export default function HelpDuration() {
 
   return (
     <span className="help-duration" title="Time helping this student">
-      {formatElapsed(elapsedSec)}
+      {elapsedSec}s
     </span>
   );
 }

@@ -1,20 +1,17 @@
 import { useState, useEffect } from 'react';
 
-function pad2(n) {
-  return String(n).padStart(2, '0');
-}
-
 /**
  * Live countdown until an away student is auto-removed from the queue.
+ * `awayTimeoutSeconds` is the configured removal delay (demo: seconds).
  */
-export default function AwayCountdown({ awaySince, awayTimeoutMinutes, active }) {
+export default function AwayCountdown({ awaySince, awayTimeoutSeconds, active }) {
   const [remainingSec, setRemainingSec] = useState(0);
 
   useEffect(() => {
     if (!active || awaySince == null) return;
     const awayMs = typeof awaySince === 'number' ? awaySince : Number(awaySince);
     if (!Number.isFinite(awayMs)) return;
-    const totalSec = awayTimeoutMinutes * 60;
+    const totalSec = Math.max(1, awayTimeoutSeconds);
     const tick = () => {
       const elapsed = (Date.now() - awayMs) / 1000;
       setRemainingSec(Math.max(0, Math.ceil(totalSec - elapsed)));
@@ -25,12 +22,9 @@ export default function AwayCountdown({ awaySince, awayTimeoutMinutes, active })
       clearTimeout(t0);
       clearInterval(id);
     };
-  }, [active, awaySince, awayTimeoutMinutes]);
+  }, [active, awaySince, awayTimeoutSeconds]);
 
   if (!active || awaySince == null) return null;
-
-  const m = Math.floor(remainingSec / 60);
-  const s = remainingSec % 60;
 
   return (
     <p className="away-countdown" role="status" aria-live="polite">
@@ -38,9 +32,7 @@ export default function AwayCountdown({ awaySince, awayTimeoutMinutes, active })
       <span className="away-countdown__sep" aria-hidden="true">
         ·
       </span>
-      <span className="away-countdown__timer">
-        Removes in {m}:{pad2(s)}
-      </span>
+      <span className="away-countdown__timer">Removes in {remainingSec}s</span>
     </p>
   );
 }

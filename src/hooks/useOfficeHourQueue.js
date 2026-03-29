@@ -11,10 +11,24 @@ import {
   serverTimestamp,
 } from 'firebase/database';
 
-const DEFAULT_AWAY_TIMEOUT_MINUTES = 5;
+/** Demo: away auto-remove and TA away requests use seconds. */
+const DEFAULT_AWAY_TIMEOUT_SECONDS = 30;
+const MAX_AWAY_TIMEOUT_SECONDS = 600;
+const MAX_AWAY_REQUEST_SECONDS = 300;
 const MY_QUEUE_ENTRY_KEY = 'officehourqueue_myEntryId';
 const TA_CHECKIN_NAME_KEY = 'officehourqueue_taCheckInName';
 const TA_PRESENCE_SESSION_KEY = 'officehourqueue_taPresenceId';
+
+/** Remove queue row and mark table absent (same as TA Finish/Delete). */
+function removeQueueEntryAndMarkTableAbsent(id, tableNum) {
+  const tableKey = String(tableNum ?? '').trim();
+  const pathUpdates = { [`queue/${id}`]: null };
+  if (tableKey) {
+    pathUpdates[`tables/${tableKey}/presence`] = 'absent';
+    pathUpdates[`tables/${tableKey}/updatedAt`] = serverTimestamp();
+  }
+  update(ref(db), pathUpdates);
+}
 
 function readStoredTaCheckInName() {
   try {
@@ -30,15 +44,6 @@ export function isTablePresent(raw) {
   return false;
 }
 
-/** TA-approved temporary away: student is not auto-removed until this timestamp. */
-export function isApprovedAwayActive(student) {
-  const r = student?.awayTimeRequest;
-  if (!r || r.status !== 'approved') return false;
-  const until = r.approvedUntil;
-  const t = typeof until === 'number' ? until : Number(until);
-  return Number.isFinite(t) && Date.now() < t;
-}
-
 function parseApprovedUntilMs(r) {
   if (!r) return NaN;
   const u = r.approvedUntil;
@@ -51,11 +56,53 @@ function parseApprovedUntilMs(r) {
   return Number.isFinite(n) ? n : NaN;
 }
 
-function isApprovedAwayExpired(student) {
+function parseDecidedAtMs(r) {
+  if (!r || r.decidedAt == null || r.decidedAt === '') return NaN;
+  const d = r.decidedAt;
+  if (typeof d === 'number' && Number.isFinite(d)) return d;
+  if (typeof d === 'string' && d.trim() !== '') {
+    const n = Number(d);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  const n = Number(d);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+/** Seconds requested for away (new `durationSeconds` or legacy `durationMinutes` × 60). */
+export function getAwayRequestDurationSeconds(r) {
+  if (!r) return null;
+  if (typeof r.durationSeconds === 'number' && Number.isFinite(r.durationSeconds)) {
+    return r.durationSeconds;
+  }
+  if (typeof r.durationMinutes === 'number' && Number.isFinite(r.durationMinutes)) {
+    return r.durationMinutes * 60;
+  }
+  return null;
+}
+
+/** Wall-clock end of TA-approved away window (prefers `approvedUntil`, else decidedAt + duration). */
+export function getApprovedAwayEndMs(student) {
   const r = student?.awayTimeRequest;
-  if (!r || String(r.status) !== 'approved') return false;
-  const until = parseApprovedUntilMs(r);
-  return Number.isFinite(until) && Date.now() >= until;
+  if (!r || String(r.status) !== 'approved') return NaN;
+  const fromUntil = parseApprovedUntilMs(r);
+  if (Number.isFinite(fromUntil)) return fromUntil;
+  const decided = parseDecidedAtMs(r);
+  const secs = getAwayRequestDurationSeconds(r);
+  if (Number.isFinite(decided) && secs != null && secs >= 1) {
+    return decided + Math.min(MAX_AWAY_REQUEST_SECONDS, Math.floor(secs)) * 1000;
+  }
+  return NaN;
+}
+
+/** TA-approved temporary away: still inside the approved window. */
+export function isApprovedAwayActive(student) {
+  const end = getApprovedAwayEndMs(student);
+  return Number.isFinite(end) && Date.now() < end;
+}
+
+function isApprovedAwayExpired(student) {
+  const end = getApprovedAwayEndMs(student);
+  return Number.isFinite(end) && Date.now() >= end;
 }
 
 export function useOfficeHourQueue() {
@@ -68,7 +115,7 @@ export function useOfficeHourQueue() {
   const [queue, setQueue] = useState([]);
   const [sensorStatus, setSensorStatus] = useState({});
   const [filter, setFilter] = useState('all');
-  const [awayTimeoutMinutes, setAwayTimeoutMinutesState] = useState(DEFAULT_AWAY_TIMEOUT_MINUTES);
+  const [awayTimeoutSeconds, setAwayTimeoutSecondsState] = useState(DEFAULT_AWAY_TIMEOUT_SECONDS);
   const [taCheckInName, setTaCheckInNameState] = useState(() => readStoredTaCheckInName());
   const [taCheckInDraft, setTaCheckInDraft] = useState(() => readStoredTaCheckInName());
   const [availableTas, setAvailableTas] = useState([]);
@@ -130,12 +177,19 @@ export function useOfficeHourQueue() {
     const settingsRef = ref(db, 'settings');
     const unsubSettings = onValue(settingsRef, (snapshot) => {
       const v = snapshot.val();
-      const m = v?.awayTimeoutMinutes;
-      if (typeof m === 'number' && Number.isFinite(m) && m >= 1 && m <= 240) {
-        setAwayTimeoutMinutesState(m);
-      } else {
-        setAwayTimeoutMinutesState(DEFAULT_AWAY_TIMEOUT_MINUTES);
+      const s = v?.awayTimeoutSeconds;
+      if (typeof s === 'number' && Number.isFinite(s) && s >= 1 && s <= MAX_AWAY_TIMEOUT_SECONDS) {
+        setAwayTimeoutSecondsState(s);
+        return;
       }
+      const legacyMin = v?.awayTimeoutMinutes;
+      if (typeof legacyMin === 'number' && Number.isFinite(legacyMin) && legacyMin >= 1 && legacyMin <= 240) {
+        setAwayTimeoutSecondsState(
+          Math.min(MAX_AWAY_TIMEOUT_SECONDS, Math.max(1, Math.floor(legacyMin * 60)))
+        );
+        return;
+      }
+      setAwayTimeoutSecondsState(DEFAULT_AWAY_TIMEOUT_SECONDS);
     });
 
     const tasRef = ref(db, 'tas');
@@ -155,7 +209,7 @@ export function useOfficeHourQueue() {
       setAvailableTas(list);
     });
 
-    const interval = setInterval(() => setTick((t) => t + 1), 60000);
+    const interval = setInterval(() => setTick((t) => t + 1), 30000);
     return () => {
       unsubQueue();
       unsubTables();
@@ -174,21 +228,14 @@ export function useOfficeHourQueue() {
   }, [queue, myQueueEntryId]);
 
   /**
-   * When TA-approved away hits its end time, hand off to the same path as sensor-based away:
-   * clear the away request, mark away + awaySince, then the standard away-timeout effect removes
-   * the row if they stay not-at-table long enough.
-   * Stable interval + queueRef so queue churn from presence sync does not reset this timer.
+   * When TA-approved away ends: remove queue row and set tables/{tableNum}/presence to absent
+   * (same as TA Finish/Delete). Stable interval + queueRef so presence churn does not reset timer.
    */
   useEffect(() => {
     const tick = () => {
-      const now = Date.now();
       for (const student of queueRef.current) {
         if (!isApprovedAwayExpired(student)) continue;
-        update(ref(db, `queue/${student.id}`), {
-          awayTimeRequest: null,
-          presence: 'away',
-          awaySince: now,
-        });
+        removeQueueEntryAndMarkTableAbsent(student.id, student.tableNum);
       }
     };
     tick();
@@ -240,7 +287,7 @@ export function useOfficeHourQueue() {
 
   /** Remove queue entries that have been away longer than the configured timeout. */
   useEffect(() => {
-    const timeoutMs = awayTimeoutMinutes * 60 * 1000;
+    const timeoutMs = awayTimeoutSeconds * 1000;
     const tick = () => {
       const now = Date.now();
       for (const student of queue) {
@@ -258,13 +305,16 @@ export function useOfficeHourQueue() {
     tick();
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [queue, sensorStatus, awayTimeoutMinutes]);
+  }, [queue, sensorStatus, awayTimeoutSeconds]);
 
-  const setAwayTimeoutMinutes = useCallback((minutes) => {
-    const n = Number(minutes);
+  const setAwayTimeoutSeconds = useCallback((seconds) => {
+    const n = Number(seconds);
     if (!Number.isFinite(n)) return;
-    const clamped = Math.min(240, Math.max(1, Math.floor(n)));
-    update(ref(db, 'settings'), { awayTimeoutMinutes: clamped });
+    const clamped = Math.min(MAX_AWAY_TIMEOUT_SECONDS, Math.max(1, Math.floor(n)));
+    update(ref(db, 'settings'), {
+      awayTimeoutSeconds: clamped,
+      awayTimeoutMinutes: null,
+    });
   }, []);
 
   const handleSubmit = (e) => {
@@ -300,17 +350,6 @@ export function useOfficeHourQueue() {
     return `${Math.floor(mins / 60)}h ago`;
   };
 
-  /** Remove queue entry and mark the student's table as TA-cleared absent (persists after queue row is gone). */
-  const removeFromQueueAndMarkTableAbsent = (id, tableNum) => {
-    const tableKey = String(tableNum ?? '').trim();
-    const pathUpdates = { [`queue/${id}`]: null };
-    if (tableKey) {
-      pathUpdates[`tables/${tableKey}/presence`] = 'absent';
-      pathUpdates[`tables/${tableKey}/updatedAt`] = serverTimestamp();
-    }
-    update(ref(db), pathUpdates);
-  };
-
   const handleStartAnswering = (id) => {
     const helperName = taCheckInName.trim() || 'TA';
     update(ref(db, `queue/${id}`), {
@@ -330,13 +369,13 @@ export function useOfficeHourQueue() {
 
   const handleFinishAnswering = (id) => {
     const student = queue.find((s) => s.id === id);
-    removeFromQueueAndMarkTableAbsent(id, student?.tableNum);
+    removeQueueEntryAndMarkTableAbsent(id, student?.tableNum);
   };
 
   const handleDelete = (id) => {
     if (!window.confirm('Remove student?')) return;
     const student = queue.find((s) => s.id === id);
-    removeFromQueueAndMarkTableAbsent(id, student?.tableNum);
+    removeQueueEntryAndMarkTableAbsent(id, student?.tableNum);
   };
 
   const handleReview = (id, message) => {
@@ -349,18 +388,19 @@ export function useOfficeHourQueue() {
     update(ref(db, `queue/${id}`), { status: '' });
   };
 
-  const handleAwayTimeRequest = useCallback((id, durationMinutes, reason) => {
+  const handleAwayTimeRequest = useCallback((id, durationSeconds, reason) => {
     if (id !== myQueueEntryId) return;
-    const mins = Number(durationMinutes);
+    const secs = Number(durationSeconds);
     const text = typeof reason === 'string' ? reason.trim() : '';
-    if (!Number.isFinite(mins) || mins < 1 || mins > 120 || !text) return;
+    if (!Number.isFinite(secs) || secs < 1 || secs > MAX_AWAY_REQUEST_SECONDS || !text) return;
     const student = queue.find((s) => s.id === id);
     const existing = student?.awayTimeRequest;
     if (existing?.status === 'pending') return;
     if (existing?.status === 'approved' && isApprovedAwayActive(student)) return;
     update(ref(db, `queue/${id}`), {
       awayTimeRequest: {
-        durationMinutes: Math.floor(mins),
+        durationSeconds: Math.floor(secs),
+        durationMinutes: null,
         reason: text,
         requestedAt: Date.now(),
         status: 'pending',
@@ -371,13 +411,15 @@ export function useOfficeHourQueue() {
   const handleAwayTimeApprove = useCallback((id) => {
     const student = queue.find((s) => s.id === id);
     const r = student?.awayTimeRequest;
-    if (!r || r.status !== 'pending') return;
-    const mins = r.durationMinutes;
-    if (typeof mins !== 'number' || !Number.isFinite(mins) || mins < 1) return;
-    const approvedUntil = Date.now() + Math.min(120, Math.floor(mins)) * 60 * 1000;
+    if (!r || String(r.status) !== 'pending') return;
+    const secs = getAwayRequestDurationSeconds(r);
+    if (secs == null || secs < 1) return;
+    const approvedMs = Math.min(MAX_AWAY_REQUEST_SECONDS, Math.floor(secs)) * 1000;
+    const approvedUntil = Date.now() + approvedMs;
     update(ref(db, `queue/${id}`), {
       awayTimeRequest: {
-        durationMinutes: r.durationMinutes,
+        durationSeconds: Math.min(MAX_AWAY_REQUEST_SECONDS, Math.floor(secs)),
+        durationMinutes: null,
         reason: r.reason,
         requestedAt: r.requestedAt,
         status: 'approved',
@@ -390,10 +432,12 @@ export function useOfficeHourQueue() {
   const handleAwayTimeDeny = useCallback((id) => {
     const student = queue.find((s) => s.id === id);
     const r = student?.awayTimeRequest;
-    if (!r || r.status !== 'pending') return;
+    if (!r || String(r.status) !== 'pending') return;
+    const ds = getAwayRequestDurationSeconds(r);
     update(ref(db, `queue/${id}`), {
       awayTimeRequest: {
-        durationMinutes: r.durationMinutes,
+        durationSeconds: ds != null ? Math.floor(ds) : null,
+        durationMinutes: null,
         reason: r.reason,
         requestedAt: r.requestedAt,
         status: 'denied',
@@ -438,8 +482,8 @@ export function useOfficeHourQueue() {
     sensorStatus,
     filter,
     setFilter,
-    awayTimeoutMinutes,
-    setAwayTimeoutMinutes,
+    awayTimeoutSeconds,
+    setAwayTimeoutSeconds,
     taCheckInName,
     taCheckInDraft,
     setTaCheckInDraft,

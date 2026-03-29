@@ -48,28 +48,28 @@ export default function TAPage() {
           </p>
         </div>
         <div className="ta-away-settings">
-          <label className="ta-away-settings__label" htmlFor="away-timeout-min">
+          <label className="ta-away-settings__label" htmlFor="away-timeout-sec">
             Remove away students after
           </label>
           <input
-            id="away-timeout-min"
+            id="away-timeout-sec"
             className="ta-away-settings__input"
             type="number"
             min={1}
-            max={240}
+            max={600}
             step={1}
-            value={q.awayTimeoutMinutes}
+            value={q.awayTimeoutSeconds}
             onChange={(e) => {
               const n = e.target.valueAsNumber;
               if (Number.isNaN(n)) return;
-              q.setAwayTimeoutMinutes(n);
+              q.setAwayTimeoutSeconds(n);
             }}
             aria-describedby="away-timeout-hint"
           />
-          <span className="ta-away-settings__unit">minutes away</span>
+          <span className="ta-away-settings__unit">seconds away</span>
           <p id="away-timeout-hint" className="ta-away-settings__hint">
             If a student is not detected at their table for this long, they are removed from the
-            queue. Applies to everyone in real time.
+            queue (demo: seconds). Applies to everyone in real time.
           </p>
         </div>
         <QueueList
@@ -78,7 +78,7 @@ export default function TAPage() {
           filter={q.filter}
           setFilter={q.setFilter}
           getWaitTime={q.getWaitTime}
-          awayTimeoutMinutes={q.awayTimeoutMinutes}
+          awayTimeoutSeconds={q.awayTimeoutSeconds}
           isTA
           handleStartAnswering={q.handleStartAnswering}
           handleStopAnswering={q.handleStopAnswering}
